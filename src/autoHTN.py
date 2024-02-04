@@ -17,9 +17,15 @@ pyhop.declare_methods ('produce', produce)
 
 def make_method (name, rule):
 	def method (state, ID):
-		# your code here
-		pass
-
+		m = []
+		if 'Requires' in rule:
+			for item, amount in rule['Requires'].items():
+				m.append(('have_enough', ID, item, amount))
+		if 'Consumes' in rule:
+			for item, amount in rule['Consumes'].items():
+				m.append(('have_enough', ID, item, amount))
+		m.append((("op_" + name).replace(' ', '_'), ID))
+		return m
 	return method
 
 def declare_methods (data):
@@ -27,20 +33,36 @@ def declare_methods (data):
 	# sort the recipes so that faster recipes go first
 
 	# your code here
-	# hint: call make_method, then declare the method to pyhop using pyhop.declare_methods('foo', m1, m2, ..., mk)	
-	pass			
+	# hint: call make_method, then declare the method to pyhop using pyhop.declare_methods('foo', m1, m2, ..., mk)
+	methods = {}	
+	for r, info in data['Recipes'].items():
+		cur_time = info['Time']
+		m = make_method(r, info)
+		m.__name__ = r.replace(' ', '_')
+		cur_m = ("produce_" + list(info['Produces'].keys())[0]).replace(' ', '_')
+		if cur_m not in methods:
+			methods[cur_m] = [(m, cur_time)]
+		else:
+			methods[cur_m].append((m, cur_time))
+			# methods[cur_m] = sorted(methods[cur_m], key=lambda x: x.cur_time)
+	for m, info in methods.items():
+		methods[m] = sorted(info, key=lambda x: x[1])
+		pyhop.declare_methods(m, *[method[0] for method in methods[m]])
+	
 
 def make_operator (rule):
 	def operator (state, ID):
 		if state.time[ID] >= rule['Time']:
-			for item, amount in rule['Requires']:
-				if state[item][ID] < amount:
-					return False
+			if 'Requires' in rule:
+				for item, amount in rule['Requires'].items():
+					if state[item][ID] < amount:
+						return False
+				for item, amount in rule['Requires'].items():
+					state[item][ID] -= amount
 			state.time[ID] -= rule['Time']
-			for item, amount in rule['Requires']:
-				state[item][ID] -= amount
-			for item, amount in rule['Produces']:
-				state[item][ID] += amount
+			for item, amount in rule['Produces'].items():
+				cur_val = getattr(state, item)
+				setattr(state, item, {ID: cur_val[ID] + amount})
 			return state
 		return False
 	return operator
@@ -48,17 +70,19 @@ def make_operator (rule):
 def declare_operators (data):
 	# your code here
 	# hint: call make_operator, then declare the operator to pyhop using pyhop.declare_operators(o1, o2, ..., ok)
-	operators = []
 	for r, info in data['Recipes'].items():
-		operators.append(make_operator(info))
-	pyhop.declare_operators(*operators)
+		op = make_operator(info)
+		op.__name__ = ("op_" + r).replace(' ', '_')
+		pyhop.declare_operators(op)
 
 def add_heuristic (data, ID):
 	# prune search branch if heuristic() returns True
 	# do not change parameters to heuristic(), but can add more heuristic functions with the same parameters: 
 	# e.g. def heuristic2(...); pyhop.add_check(heuristic2)
 	def heuristic (state, curr_task, tasks, plan, depth, calling_stack):
-		# your code here
+		
+		if (curr_task[0] == 'produce_iron_axe' or curr_task[0] == 'produce_stone_axe' or curr_task[0] == 'produce_wooden_axe') and state.wood[ID] == 0:
+			return True
 		return False # if True, prune this branch
 
 	pyhop.add_check(heuristic)
