@@ -32,14 +32,26 @@ def declare_methods (data):
 
 def make_operator (rule):
 	def operator (state, ID):
-		# your code here
-		pass
+		if state.time[ID] >= rule['Time']:
+			for item, amount in rule['Requires']:
+				if state[item][ID] < amount:
+					return False
+			state.time[ID] -= rule['Time']
+			for item, amount in rule['Requires']:
+				state[item][ID] -= amount
+			for item, amount in rule['Produces']:
+				state[item][ID] += amount
+			return state
+		return False
 	return operator
 
 def declare_operators (data):
 	# your code here
 	# hint: call make_operator, then declare the operator to pyhop using pyhop.declare_operators(o1, o2, ..., ok)
-	pass
+	operators = []
+	for r, info in data['Recipes'].items():
+		operators.append(make_operator(info))
+	pyhop.declare_operators(*operators)
 
 def add_heuristic (data, ID):
 	# prune search branch if heuristic() returns True
