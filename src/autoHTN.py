@@ -17,13 +17,12 @@ pyhop.declare_methods ('produce', produce)
 
 def make_method (name, rule):
 	def method (state, ID):
+		order = ['bench','ingot', 'furnace', 'ore', 'coal', 'cobble', 'stick', 'plank', 'wood', 'stone_pickaxe', 'iron_pickaxe', 'wooden_pickaxe', 'stone_axe', 'iron_axe', 'wooden_axe']
+		needs = rule.get('Requires', {}) | rule.get('Consumes', {})
 		m = []
-		if 'Requires' in rule:
-			for item, amount in rule['Requires'].items():
-				m.append(('have_enough', ID, item, amount))
-		if 'Consumes' in rule:
-			for item, amount in rule['Consumes'].items():
-				m.append(('have_enough', ID, item, amount))
+		items = sorted(needs.items(), key=lambda x: order.index(x[0]))
+		for item, amount in items:
+			m.append(('have_enough', ID, item, amount))
 		m.append((("op_" + name).replace(' ', '_'), ID))
 		return m
 	return method
@@ -34,7 +33,7 @@ def declare_methods (data):
 
 	# your code here
 	# hint: call make_method, then declare the method to pyhop using pyhop.declare_methods('foo', m1, m2, ..., mk)
-	methods = {}	
+	methods = {}
 	for r, info in data['Recipes'].items():
 		cur_time = info['Time']
 		m = make_method(r, info)
@@ -62,6 +61,7 @@ def make_operator (rule):
 					cur_val = getattr(state, item)
 					if cur_val[ID] < amount:
 						return False
+				for item, amount in rule['Consumes'].items():
 					setattr(state, item, {ID: cur_val[ID] - amount})
 			state.time[ID] -= rule['Time']
 			for item, amount in rule['Produces'].items():
@@ -74,44 +74,81 @@ def make_operator (rule):
 def declare_operators (data):
 	# your code here
 	# hint: call make_operator, then declare the operator to pyhop using pyhop.declare_operators(o1, o2, ..., ok)
+	ops = []
 	for r, info in data['Recipes'].items():
 		op = make_operator(info)
 		op.__name__ = ("op_" + r).replace(' ', '_')
-		pyhop.declare_operators(op)
+		ops.append(op)
+	pyhop.declare_operators(*ops)
 
 def add_heuristic (data, ID):
-	# prune search branch if heuristic() returns True
-	# do not change parameters to heuristic(), but can add more heuristic functions with the same parameters: 
-	# e.g. def heuristic2(...); pyhop.add_check(heuristic2)
+	def start_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		if len(tasks) <= 2:
+			return False
 
-	def heuristic(state, curr_task, tasks, plan, depth, calling_stack):
-		if curr_task[0] == 'produce':
-			item = curr_task[-1]
-			for recipe, info in data['Recipes'].items():
-				if item in info['Produces']:
-					if 'Requires' in info:
-						required_items = info['Requires']
-						if all(getattr(state, required_item)[ID] >= amount for required_item, amount in required_items.items()):
-							return True
-		return False
-	def depth_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
-		if depth > 50:
+	def time_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		# Prune the branch if the time taken exceeds a certain threshold
+		if state.time[ID] <= 0:
 			return True
+
+	def depth_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		if depth > 500:
+			return True
+
+	def wood_hueristic(state, curr_task, tasks, plan, depth, calling_stack):
+		wood = sum([task[3] for task in tasks if task[0] == 'have_enough' and task[2] == 'wood'])
+		if curr_task[0] in ['produce_wooden_axe'] and wood < 10:
+			return True
+		elif curr_task[0] in ['produce_stone_axe'] and wood < 20:
+			return True
+
+	def mine_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		total_mined = sum([task[3] for task in tasks if task[0] =='have_enough' and task[2] in ['cobble', 'coal', 'ore']])
+		total_ore = sum([task[3] for task in tasks if task[0] =='have_enough' and task[2] == 'ore'])
+		if curr_task[0] in ['produce_stone_pickaxe'] and (total_mined < 10 and total_ore == 0):
+			return True	
+		if curr_task[0] in ['produce_iron_pickaxe'] and total_mined < 20:
+			return True
+
+	def iron_axe_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		if curr_task == ('have_enough', ID, 'iron_axe', 1):	
+			if curr_task[2] in ['iron_axe'] and curr_task != tasks[len(tasks)-1]: return True
+		
+	def cyclical_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		min_tools = [('have_enough', ID, item, 1) for item in data['Tools']]
+		if curr_task in min_tools:	
+			if tasks.count(curr_task) > 1:
+				return True
 		return False
 
-	def cost_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
-		# Estimate the cost based on the number of tasks remaining
-		cost = len(tasks)
-
-		# Increase the cost if the current task requires a resource that is not available
-		if curr_task[0] == 'produce' and getattr(state, curr_task[2])[ID] == 0:
-			cost += 1
-
-		# Prune the branch if the cost exceeds a certain threshold
-		return cost > 15
-	#pyhop.add_check(heuristic)
+	def resource_avalible_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		if curr_task[0] == 'produce':
+			item = curr_task[2]
+			if item not in data['Goal'] and item in data["Items"]:
+				if item == 'ore' or item == 'coal' or item == 'wood':
+					if getattr(state, item)[ID] > 1:
+						return True
+				elif item == 'plank':
+					if(getattr(state, item)[ID] > 4):
+						return True
+				elif item == 'stick':
+					if(getattr(state, item)[ID] > 2):
+						return True
+				elif item == 'cobble':
+					if getattr(state, item)[ID] > 8:
+						return True
+				elif item == 'ingot':
+					if getattr(state, item)[ID] > 6:
+						return True
+					
+	pyhop.add_check(start_heuristic)
+	pyhop.add_check(time_heuristic)
 	pyhop.add_check(depth_heuristic)
-	pyhop.add_check(cost_heuristic)
+	pyhop.add_check(wood_hueristic)
+	pyhop.add_check(mine_heuristic)
+	pyhop.add_check(iron_axe_heuristic)
+	pyhop.add_check(resource_avalible_heuristic)
+	pyhop.add_check(cyclical_heuristic)
 
 
 def set_up_state (data, ID, time=0):
@@ -154,5 +191,5 @@ if __name__ == '__main__':
 
 	# Hint: verbose output can take a long time even if the solution is correct; 
 	# try verbose=1 if it is taking too long
-	pyhop.pyhop(state, goals, verbose=3)
-	# pyhop.pyhop(state, [('have_enough', 'agent', 'cart', 1),('have_enough', 'agent', 'rail', 20)], verbose=1)
+	# pyhop.pyhop(state, goals, verbose=1)
+	pyhop.pyhop(state, [('have_enough', 'agent', 'cart', 1),('have_enough', 'agent', 'rail', 20)], verbose=1)
