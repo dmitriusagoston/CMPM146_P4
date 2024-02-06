@@ -17,7 +17,8 @@ pyhop.declare_methods ('produce', produce)
 
 def make_method (name, rule):
 	def method (state, ID):
-		order = ['bench','ingot', 'furnace', 'ore', 'coal', 'cobble', 'stick', 'plank', 'wood', 'stone_pickaxe', 'iron_pickaxe', 'wooden_pickaxe', 'stone_axe', 'iron_axe', 'wooden_axe']
+		order = ['bench', 'furnace', 'ingot', 'ore', 'coal', 'cobble', 'stick', 'plank', 'wood', 'iron_axe', 'stone_axe', 'wooden_axe',
+				'iron_pickaxe', 'wooden_pickaxe', 'stone_pickaxe']
 		needs = rule.get('Requires', {}) | rule.get('Consumes', {})
 		m = []
 		items = sorted(needs.items(), key=lambda x: order.index(x[0]))
@@ -95,30 +96,57 @@ def add_heuristic (data, ID):
 		if depth > 500:
 			return True
 
+	def tool_dupe_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
+		if curr_task[0] == 'produce' and curr_task[2] in data['Tools']:
+			# check state if current tool already made
+			if getattr(state, curr_task[2])[ID] > 0:
+				return True
+
 	def wood_hueristic(state, curr_task, tasks, plan, depth, calling_stack):
 		wood = sum([task[3] for task in tasks if task[0] == 'have_enough' and task[2] == 'wood'])
-		if curr_task[0] in ['produce_wooden_axe'] and wood < 10:
+		if curr_task[0] in ['produce_wooden_axe'] and wood < 5 and 'wooden_axe' not in data['Goal']:
 			return True
-		elif curr_task[0] in ['produce_stone_axe'] and wood < 20:
+		elif curr_task[0] in ['produce_stone_axe'] and wood < 10 and 'rail' not in data['Goal'] and 'stone_axe' not in data['Goal']:
 			return True
 
 	def mine_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
-		total_mined = sum([task[3] for task in tasks if task[0] =='have_enough' and task[2] in ['cobble', 'coal', 'ore']])
-		total_ore = sum([task[3] for task in tasks if task[0] =='have_enough' and task[2] == 'ore'])
-		if curr_task[0] in ['produce_stone_pickaxe'] and (total_mined < 10 and total_ore == 0):
-			return True	
-		if curr_task[0] in ['produce_iron_pickaxe'] and total_mined < 20:
-			return True
+		mined_actions_cobble = ['op_{}_for_cobble'.format(x) for x in ['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe']]
+		mined_actions_ore = ['op_{}_for_ore'.format(x) for x in ['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe']]
+		mined_actions_coal = ['op_{}_for_coal'.format(x) for x in ['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe']]
+		mined_actions = mined_actions_cobble + mined_actions_ore + mined_actions_coal
 
+		total_mine = 0
+		total_ores = 0
+		total_coals = 0
+		# get total mined resources
+		for action in plan:
+			if action[0] in mined_actions:
+				total_mine += 1
+			if action[0] in mined_actions_ore:
+				total_ores += 1
+			if action[0] in mined_actions_coal:
+				total_coals += 1
+
+		total_mined = sum([task[3] for task in tasks if len(task) > 3 and task[2] in ['cobble', 'coal', 'ore']])
+		total_ore = sum([task[3] for task in tasks if len(task) > 3 and task[2] == 'ore'])
+
+		if curr_task[0] in ['produce_stone_pickaxe'] and (total_mined < 5 and total_ore == 0) and 'stone_pickaxe' not in data['Goal']:
+			return True
+		if curr_task[0] in ['produce_iron_pickaxe'] and total_mined != 2 and 'iron_pickaxe' not in data['Goal']:
+			return True
+		
 	def iron_axe_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
 		if curr_task == ('have_enough', ID, 'iron_axe', 1):	
-			if curr_task[2] in ['iron_axe'] and curr_task != tasks[len(tasks)-1]: return True
+			if curr_task[2] in ['iron_axe'] and curr_task != tasks[len(tasks)-1] and 'iron_axe' not in data['Goal']: 
+				return True
 		
 	def cyclical_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
 		min_tools = [('have_enough', ID, item, 1) for item in data['Tools']]
 		if curr_task in min_tools:	
 			if tasks.count(curr_task) > 1:
 				return True
+	
+	def end_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
 		return False
 
 	def resource_avalible_heuristic(state, curr_task, tasks, plan, depth, calling_stack):
@@ -140,15 +168,17 @@ def add_heuristic (data, ID):
 				elif item == 'ingot':
 					if getattr(state, item)[ID] > 6:
 						return True
-					
+		
 	pyhop.add_check(start_heuristic)
-	pyhop.add_check(time_heuristic)
-	pyhop.add_check(depth_heuristic)
+	pyhop.add_check(iron_axe_heuristic)
+	pyhop.add_check(cyclical_heuristic)
+	# pyhop.add_check(time_heuristic)
+	# pyhop.add_check(depth_heuristic)
+	pyhop.add_check(tool_dupe_heuristic)
 	pyhop.add_check(wood_hueristic)
 	pyhop.add_check(mine_heuristic)
-	pyhop.add_check(iron_axe_heuristic)
-	pyhop.add_check(resource_avalible_heuristic)
-	pyhop.add_check(cyclical_heuristic)
+	# pyhop.add_check(resource_avalible_heuristic)
+	pyhop.add_check(end_heuristic)
 
 
 def set_up_state (data, ID, time=0):
@@ -179,17 +209,17 @@ if __name__ == '__main__':
 	with open(rules_filename) as f:
 		data = json.load(f)
 
-	state = set_up_state(data, 'agent', time=300) # allot time here
+	state = set_up_state(data, 'agent', time=250) # allot time here
 	goals = set_up_goals(data, 'agent')
 
 	declare_operators(data)
 	declare_methods(data)
 	add_heuristic(data, 'agent')
 
-	# pyhop.print_operators()
-	# pyhop.print_methods()
+	pyhop.print_operators()
+	pyhop.print_methods()
 
 	# Hint: verbose output can take a long time even if the solution is correct; 
 	# try verbose=1 if it is taking too long
-	# pyhop.pyhop(state, goals, verbose=1)
-	pyhop.pyhop(state, [('have_enough', 'agent', 'cart', 1),('have_enough', 'agent', 'rail', 20)], verbose=1)
+	pyhop.pyhop(state, goals, verbose=1)
+	# pyhop.pyhop(state, [('have_enough', 'agent', 'cart', 1),('have_enough', 'agent', 'rail', 20)], verbose=1)
